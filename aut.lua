@@ -43,10 +43,10 @@ local GEAR_LIST = {
 local EGG_WL = {"Tropical", "Exotic"}
 
 local CFG = {
-    Interval = 5, Delay = 0.15, BuyAll = true,
+    Interval = 5, Delay = 0.1, BuyAll = true,
     BaitWL = {}, BaitBL = {},
-    AfkInt = 60,
-    PlaceOn = false, PlaceInt = 120, PlaceType = "SupremeFoodTray",
+    AfkInt = 300,
+    PlaceOn = false, PlaceInt = 300, PlaceType = "SupremeFoodTray",
     PlaceCat = "booster", PlacePos = Vector3.new(10.862998962402344, -0.012000083923339844, -11),
     CraftOn = false, CraftItem = "TimeJumper", CraftCat = "gear",
     CraftMats = {{n="TeleportWand",a=10},{n="MagnifyingGlass",a=25},{n="SupremeAutoFeeder",a=1}},
