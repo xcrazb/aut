@@ -1,8 +1,8 @@
--- Auto Farm: Gear + Bait + Egg + Anti-AFK + Place + Craft
+-- Auto Farm: Gear + Bait + Egg + Anti-AFK + Place + Craft (LIGHTWEIGHT + FPS)
 local RS = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
-local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
 local player = Players.LocalPlayer
 local pg = player:WaitForChild("PlayerGui")
 
@@ -25,56 +25,84 @@ end)
 local rc = RS:WaitForChild("rbxts_include"):WaitForChild("node_modules")
     :WaitForChild("@rbxts"):WaitForChild("remo"):WaitForChild("src")
     :WaitForChild("container")
-local placeRemote = rc:WaitForChild("ponds.placeBuilding")
+local placeRemote       = rc:WaitForChild("ponds.placeBuilding")
 local selectCraftRemote = rc:WaitForChild("crafting.selectCraftingItem")
-local submitRemote = rc:WaitForChild("crafting.submitItems")
-local startCraftRemote = rc:WaitForChild("crafting.startCraft")
-local collectRemote = rc:WaitForChild("crafting.collectCraft")
+local submitRemote      = rc:WaitForChild("crafting.submitItems")
+local startCraftRemote  = rc:WaitForChild("crafting.startCraft")
+local collectRemote     = rc:WaitForChild("crafting.collectCraft")
+
+local purchaseGear = remotes.shop.purchaseGear
+local purchaseBait = remotes.shop.purchaseBait
+local purchaseEgg  = remotes.shop.purchaseEgg
 
 local GEAR_LIST = {
-    {t="NetMover"},{t="FoodScoop"},{t="MagnifyingGlass"},{t="TeleportWand"},
-    {t="StarLock"},{t="TradingTicket"},{t="BasicAutoFeeder"},{t="AdvancedAutoFeeder"},
-    {t="SupremeAutoFeeder"},{t="ExtremeAutoFeeder"},{t="GodlyAutoFeeder"},
-    {t="BasicFoodTray"},{t="AdvancedFoodTray"},{t="SupremeFoodTray"},
-    {t="XpCookie"},{t="PetToy"},{t="PetWhistle"},{t="GoldenCookie"},
-    {t="EggHatcher"},{t="EggIncubator"},{t="MutationBeacon"},{t="StormHorn"},
+    "NetMover","FoodScoop","MagnifyingGlass","TeleportWand",
+    "StarLock","TradingTicket","BasicAutoFeeder","AdvancedAutoFeeder",
+    "SupremeAutoFeeder","ExtremeAutoFeeder","GodlyAutoFeeder",
+    "BasicFoodTray","AdvancedFoodTray","SupremeFoodTray",
+    "XpCookie","PetToy","PetWhistle","GoldenCookie",
+    "EggHatcher","EggIncubator","MutationBeacon","StormHorn",
 }
 
 local EGG_WL = {"Tropical", "Exotic"}
 
+-- ==================== PALET WARNA ====================
+local COLOR = {
+    ON_BG        = Color3.fromRGB(50, 200, 80),    -- hijau (aktif)
+    ON_TEXT      = Color3.fromRGB(255, 255, 255),
+    ON_STROKE    = Color3.fromRGB(30, 140, 50),
+
+    OFF_BG       = Color3.fromRGB(200, 60, 60),    -- merah (mati)
+    OFF_TEXT     = Color3.fromRGB(255, 255, 255),
+    OFF_STROKE   = Color3.fromRGB(140, 30, 30),
+}
+
 local CFG = {
-    Interval = 5, Delay = 0.1, BuyAll = true,
+    Interval = 5, BuyAll = true,
     BaitWL = {}, BaitBL = {},
     AfkInt = 300,
     PlaceOn = false, PlaceInt = 300, PlaceType = "SupremeFoodTray",
     PlaceCat = "booster", PlacePos = Vector3.new(10.862998962402344, -0.012000083923339844, -11),
     CraftOn = false, CraftItem = "TimeJumper", CraftCat = "gear",
     CraftMats = {{n="TeleportWand",a=10},{n="MagnifyingGlass",a=25},{n="SupremeAutoFeeder",a=1}},
-    CraftInt = 10, CraftStep = 0.5, CraftMon = 5,
+    CraftMon = 5,
+    StockTTL = 1.5,
+    BuyDelay = 0.08,
+    SchedulerTick = 0.5,
 }
 
 local S = {
-    gOn=false, gTot=0, gRun=false,
-    bOn=false, bTot=0, bRun=false, bDet={},
-    eOn=false, eTot=0, eRun=false, eDet={},
-    aOn=false, aRun=false, aTot=0, aOk=0, aFail=0,
+    gOn=false, gTot=0,
+    bOn=false, bTot=0,
+    eOn=false, eTot=0,
+    aOn=false, aTot=0, aOk=0, aFail=0,
     pRun=false, pCnt=0, pCd=0,
     cRun=false, cAtt=0, cOk=0, cFail=0, cCd=0, cPhase="idle",
     minimized=false,
+    nextGear=0, nextBait=0, nextEgg=0, nextAfk=0, nextPlace=0,
+    _stockCache = {},
+    fps = 0,
 }
 
 local function log(...) if CFG.Debug ~= false then print("[AutoFarm]", ...) end end
 
+-- ==================== STOCK ====================
+local function stockCacheKey(shopType, itemType) return shopType .. "|" .. itemType end
+
 local function getStock(shopType, itemType)
-    local ok, res = pcall(function()
-        local rs = shopRestock()
-        if not rs then return 0 end
-        local pi = personalRestockItems()
-        local data = getPlayerData(player)
-        if not data then return 0 end
-        local now = os.time()
+    local k = stockCacheKey(shopType, itemType)
+    local now = os.clock()
+    local c = S._stockCache[k]
+    if c and (now - c.t) < CFG.StockTTL then return c.v end
+
+    local val = 0
+    local ok, rs, pi, data = pcall(function()
+        return shopRestock(), personalRestockItems(), getPlayerData(player)
+    end)
+    if ok and rs and data then
+        local nowT = os.time()
         local pr = data.personalRestocks and data.personalRestocks[shopType]
-        local active = pr and pr.endTime and now < pr.endTime
+        local active = pr and pr.endTime and nowT < pr.endTime
         local uid = tostring(player.UserId)
         local avail
         if active then
@@ -91,111 +119,116 @@ local function getStock(shopType, itemType)
                 bought = pur.purchases[itemType] or 0
             end
         end
-        return math.max(0, avail - bought)
-    end)
-    return ok and res or 0
+        val = math.max(0, avail - bought)
+    end
+
+    S._stockCache[k] = {v = val, t = now}
+    return val
 end
 
+local function invalidateStock(shopType, itemType)
+    S._stockCache[stockCacheKey(shopType, itemType)] = nil
+end
+
+-- ==================== AVAILABLE LIST ====================
 local function getAvail(shopType, wl, bl)
-    local ok, res = pcall(function()
-        local rs = shopRestock()
-        if not rs then return {} end
-        local shop = rs.availableItems and rs.availableItems[shopType]
-        if not shop then return {} end
-        local list = {}
-        for t, s in pairs(shop) do
-            local inc = true
-            if wl and #wl > 0 then
-                inc = false
-                for _, w in ipairs(wl) do if t == w then inc = true break end end
-            end
-            if bl then
-                for _, b in ipairs(bl) do if t == b then inc = false break end end
-            end
-            if inc then table.insert(list, {type=t, stock=s}) end
-        end
-        return list
-    end)
-    return ok and res or {}
+    local list = {}
+    local rs = shopRestock()
+    if not rs then return list end
+    local shop = rs.availableItems and rs.availableItems[shopType]
+    if not shop then return list end
+    local wlSet, blSet
+    if wl and #wl > 0 then wlSet = {} for _, v in ipairs(wl) do wlSet[v] = true end end
+    if bl and #bl > 0 then blSet = {} for _, v in ipairs(bl) do blSet[v] = true end end
+    for t, s in pairs(shop) do
+        local inc = true
+        if wlSet and not wlSet[t] then inc = false end
+        if inc and blSet and blSet[t] then inc = false end
+        if inc then list[#list+1] = {type=t, stock=s} end
+    end
+    return list
 end
 
-local function buyGear(t) return pcall(remotes.shop.purchaseGear, t) end
-local function buyBait(t) return pcall(remotes.shop.purchaseBait, t) end
-local function buyEgg(t) return pcall(remotes.shop.purchaseEgg, t) end
+-- ==================== BUY HELPERS ====================
+local function buyGearSafe(t)
+    local ok = pcall(purchaseGear, t)
+    if ok then invalidateStock(ShopType.Gear, t) end
+    return ok
+end
+local function buyBaitSafe(t)
+    local ok = pcall(purchaseBait, t)
+    if ok then invalidateStock(ShopType.Bait, t) end
+    return ok
+end
+local function buyEggSafe(t)
+    local ok = pcall(purchaseEgg, t)
+    if ok then invalidateStock(ShopType.Eggs, t) end
+    return ok
+end
 
+-- ==================== BULK BUY ====================
 local function bulkGear()
-    local b, f, s = 0, 0, 0
-    for _, g in ipairs(GEAR_LIST) do
-        if not S.gOn then break end
-        local rem = getStock(ShopType.Gear, g.t)
-        if rem <= 0 then s = s + 1 task.wait(0.02) continue end
-        local gb = 0
-        for a = 1, (CFG.BuyAll and rem + 3 or 1) do
-            if not S.gOn then break end
-            if a > 1 then
-                local ns = getStock(ShopType.Gear, g.t)
-                if ns <= 0 then break end
+    for _, t in ipairs(GEAR_LIST) do
+        if not S.gOn then return end
+        local rem = getStock(ShopType.Gear, t)
+        if rem > 0 then
+            local max = CFG.BuyAll and (rem + 2) or 1
+            for a = 1, max do
+                if not S.gOn then return end
+                if not buyGearSafe(t) then break end
+                S.gTot += 1
+                if a < max then task.wait(CFG.BuyDelay) end
             end
-            if buyGear(g.t) then b = b + 1 gb = gb + 1 S.gTot = S.gTot + 1 else f = f + 1 break end
-            task.wait(CFG.Delay)
         end
     end
-    return b, f, s
 end
 
 local function bulkBait()
-    local b, f, s = 0, 0, 0
     local list = getAvail(ShopType.Bait, CFG.BaitWL, CFG.BaitBL)
-    S.bDet = list
-    if #list == 0 then return 0, 0, 0 end
+    if #list == 0 then return end
     for _, it in ipairs(list) do
-        if not S.bOn then break end
+        if not S.bOn then return end
         local rem = getStock(ShopType.Bait, it.type)
-        if rem <= 0 then s = s + 1 task.wait(0.02) continue end
-        for a = 1, (CFG.BuyAll and rem + 3 or 1) do
-            if not S.bOn then break end
-            if a > 1 then
-                local ns = getStock(ShopType.Bait, it.type)
-                if ns <= 0 then break end
+        if rem > 0 then
+            local max = CFG.BuyAll and (rem + 2) or 1
+            for a = 1, max do
+                if not S.bOn then return end
+                if not buyBaitSafe(it.type) then break end
+                S.bTot += 1
+                if a < max then task.wait(CFG.BuyDelay) end
             end
-            if buyBait(it.type) then b = b + 1 S.bTot = S.bTot + 1 else f = f + 1 break end
-            task.wait(CFG.Delay)
         end
     end
-    return b, f, s
 end
 
 local function bulkEgg()
-    local b, f, s = 0, 0, 0
     local list = getAvail(ShopType.Eggs, EGG_WL, nil)
-    S.eDet = list
-    if #list == 0 then return 0, 0, 0 end
+    if #list == 0 then return end
     for _, it in ipairs(list) do
-        if not S.eOn then break end
+        if not S.eOn then return end
         local rem = getStock(ShopType.Eggs, it.type)
-        if rem <= 0 then s = s + 1 task.wait(0.02) continue end
-        for a = 1, (CFG.BuyAll and rem + 3 or 1) do
-            if not S.eOn then break end
-            if a > 1 then
-                local ns = getStock(ShopType.Eggs, it.type)
-                if ns <= 0 then break end
+        if rem > 0 then
+            local max = CFG.BuyAll and (rem + 2) or 1
+            for a = 1, max do
+                if not S.eOn then return end
+                if not buyEggSafe(it.type) then break end
+                S.eTot += 1
+                if a < max then task.wait(CFG.BuyDelay) end
             end
-            if buyEgg(it.type) then b = b + 1 S.eTot = S.eTot + 1 else f = f + 1 break end
-            task.wait(CFG.Delay)
         end
     end
-    return b, f, s
 end
 
+-- ==================== ANTI-AFK ====================
 local function doJump()
-    S.aTot = S.aTot + 1
+    S.aTot += 1
     local ch = player.Character
-    if not ch then S.aFail = S.aFail + 1 return end
+    if not ch then S.aFail += 1 return end
     local h = ch:FindFirstChildOfClass("Humanoid")
-    if not h or h.Health <= 0 then S.aFail = S.aFail + 1 return end
+    if not h or h.Health <= 0 then S.aFail += 1 return end
     local cs = h:GetState()
     if cs == Enum.HumanoidStateType.Jumping or cs == Enum.HumanoidStateType.Freefall then
-        S.aOk = S.aOk + 1 return
+        S.aOk += 1 return
     end
     local ok = pcall(function()
         if h.Sit then h.Sit = false task.wait(0.05) end
@@ -204,35 +237,34 @@ local function doJump()
         task.wait(0.05)
         h:ChangeState(Enum.HumanoidStateType.Jumping)
     end)
-    if ok then task.wait(0.15) S.aOk = S.aOk + 1 else S.aFail = S.aFail + 1 end
+    if ok then S.aOk += 1 else S.aFail += 1 end
 end
 
+-- ==================== PLACE ====================
 local function doPlace()
-    S.pCnt = S.pCnt + 1
-    local ok = pcall(function()
+    S.pCnt += 1
+    pcall(function()
         placeRemote:InvokeServer(CFG.PlaceCat, CFG.PlaceType, CFG.PlacePos)
     end)
-    if ok then log("[Place] ✅ #" .. S.pCnt) else log("[Place] ❌") end
 end
+
+-- ==================== CRAFT ====================
+local CRAFT_TIME_FALLBACK = {DiamondCookie=300, YolkBreaker=600, TimeJumper=600, ShieldLock=1500, NetRetractor=1500}
 
 local function getCraftTime(id, cat)
     if craftingUtils and craftingUtils.getCraftingTime then
-        local ok, r = pcall(function() return craftingUtils.getCraftingTime(id, cat) end)
+        local ok, r = pcall(craftingUtils.getCraftingTime, id, cat)
         if ok and r then return r end
     end
-    local d = {DiamondCookie=300, YolkBreaker=600, TimeJumper=600, ShieldLock=1500, NetRetractor=1500}
-    return d[id] or 600
+    return CRAFT_TIME_FALLBACK[id] or 600
 end
 
 local function getCraftData()
-    local ok, r = pcall(function()
-        local data = getPlayerData(player)
-        if not data or not data.crafting then return nil end
-        local c = data.crafting[CFG.CraftCat]
-        if not c or not c.id then return nil end
-        return c
-    end)
-    return ok and r or nil
+    local data = getPlayerData(player)
+    if not data or not data.crafting then return nil end
+    local c = data.crafting[CFG.CraftCat]
+    if not c or not c.id then return nil end
+    return c
 end
 
 local function getCraftRem()
@@ -252,158 +284,101 @@ local function isCraftActive()
 end
 
 local function doCraftOnce()
-    S.cAtt = S.cAtt + 1
+    S.cAtt += 1
     S.cPhase = "submitting"
-    local ok = true
-    if not pcall(function() selectCraftRemote:FireServer(CFG.CraftItem, CFG.CraftCat) end) then ok = false end
-    task.wait(CFG.CraftStep)
+    local ok = pcall(function()
+        selectCraftRemote:FireServer(CFG.CraftItem, CFG.CraftCat)
+    end)
+    task.wait(0.3)
     if ok then
-        local mats = {}
+        local mats, idx = {}, 1
         for _, m in ipairs(CFG.CraftMats) do
-            for i = 1, m.a do table.insert(mats, m.n) end
+            for _ = 1, m.a do mats[idx] = m.n idx += 1 end
         end
-        if not pcall(function() submitRemote:FireServer(mats, CFG.CraftCat) end) then ok = false end
-        task.wait(CFG.CraftStep)
+        ok = pcall(function() submitRemote:FireServer(mats, CFG.CraftCat) end)
+        task.wait(0.3)
     end
     if ok then
-        if not pcall(function() startCraftRemote:FireServer(CFG.CraftCat) end) then ok = false end
-        task.wait(CFG.CraftStep)
+        ok = pcall(function() startCraftRemote:FireServer(CFG.CraftCat) end)
+        task.wait(0.3)
     end
-    if not ok then S.cFail = S.cFail + 1 S.cPhase = "idle" return false end
+    if not ok then
+        S.cFail += 1
+        S.cPhase = "idle"
+        return false
+    end
     S.cPhase = "crafting"
     return true
 end
 
-local function monitorCraft()
-    while S.cRun and CFG.CraftOn do
-        task.wait(CFG.CraftMon)
-        if not S.cRun or not CFG.CraftOn then return false end
-        local rem = getCraftRem()
-        if rem == nil then S.cPhase = "idle" S.cCd = 0 return false end
-        S.cCd = rem
-        S.cPhase = "crafting"
-        if rem <= 0 then
-            S.cPhase = "collecting"
-            S.cCd = 0
-            task.wait(1)
-            if pcall(function() collectRemote:FireServer(CFG.CraftCat) end) then
-                S.cOk = S.cOk + 1
-                S.cPhase = "idle"
-                return true
+local function collectCraft()
+    S.cPhase = "collecting"
+    local ok = pcall(function() collectRemote:FireServer(CFG.CraftCat) end)
+    if ok then S.cOk += 1 end
+    S.cPhase = "idle"
+    return ok
+end
+
+-- ==================== SCHEDULER ====================
+local schedulerRunning = false
+
+local function tickScheduler()
+    local now = os.clock()
+
+    if S.gOn and now >= S.nextGear then
+        S.nextGear = now + CFG.Interval
+        task.spawn(bulkGear)
+    end
+    if S.bOn and now >= S.nextBait then
+        S.nextBait = now + CFG.Interval
+        task.spawn(bulkBait)
+    end
+    if S.eOn and now >= S.nextEgg then
+        S.nextEgg = now + CFG.Interval
+        task.spawn(bulkEgg)
+    end
+    if S.aOn and now >= S.nextAfk then
+        S.nextAfk = now + CFG.AfkInt
+        task.spawn(doJump)
+    end
+    if CFG.PlaceOn and now >= S.nextPlace then
+        S.nextPlace = now + CFG.PlaceInt
+        task.spawn(doPlace)
+    end
+    if CFG.CraftOn then
+        if isCraftActive() then
+            local rem = getCraftRem()
+            if rem then
+                S.cCd = rem
+                S.cPhase = "crafting"
+                if rem <= 0 then task.spawn(collectCraft) end
             else
                 S.cPhase = "idle"
-                return false
+                S.cCd = 0
+            end
+        else
+            if not S._nextCraftTry or now >= S._nextCraftTry then
+                S._nextCraftTry = now + 2
+                task.spawn(doCraftOnce)
             end
         end
-    end
-    S.cPhase = "idle"
-    S.cCd = 0
-    return false
-end
-
-local function startCraft()
-    if S.cRun then return end
-    S.cRun = true
-    task.spawn(function()
-        while S.cRun and CFG.CraftOn do
-            if isCraftActive() then monitorCraft()
-            else if doCraftOnce() then monitorCraft() end end
-            for i = CFG.CraftInt, 1, -1 do
-                if not S.cRun or not CFG.CraftOn then break end
-                task.wait(1)
-            end
-        end
-        S.cPhase = "idle"
+    else
         S.cCd = 0
-        S.cRun = false
-    end)
+    end
 end
 
-local function startAntiAfk()
-    if S.aRun then return end
-    S.aRun = true
+local function startScheduler()
+    if schedulerRunning then return end
+    schedulerRunning = true
     task.spawn(function()
-        while S.aRun and S.aOn do
-            for i = CFG.AfkInt, 1, -1 do
-                if not S.aRun or not S.aOn then break end
-                task.wait(1)
-            end
-            if not S.aRun or not S.aOn then break end
-            doJump()
-            task.wait(0.5)
+        while schedulerRunning do
+            tickScheduler()
+            task.wait(CFG.SchedulerTick)
         end
-        S.aRun = false
     end)
 end
 
-local function startPlace()
-    if S.pRun then return end
-    S.pRun = true
-    task.spawn(function()
-        doPlace()
-        task.wait(0.5)
-        while S.pRun and CFG.PlaceOn do
-            for i = CFG.PlaceInt, 1, -1 do
-                if not S.pRun or not CFG.PlaceOn then break end
-                S.pCd = i
-                task.wait(1)
-            end
-            if not S.pRun or not CFG.PlaceOn then break end
-            S.pCd = 0
-            doPlace()
-            task.wait(0.5)
-        end
-        S.pRun = false
-        S.pCd = 0
-    end)
-end
-
-local function startGearMon()
-    if S.gRun then return end
-    S.gRun = true
-    task.spawn(function()
-        while S.gOn do
-            bulkGear()
-            for i = CFG.Interval, 1, -1 do
-                if not S.gOn then break end
-                task.wait(1)
-            end
-        end
-        S.gRun = false
-    end)
-end
-
-local function startBaitMon()
-    if S.bRun then return end
-    S.bRun = true
-    task.spawn(function()
-        while S.bOn do
-            bulkBait()
-            for i = CFG.Interval, 1, -1 do
-                if not S.bOn then break end
-                task.wait(1)
-            end
-        end
-        S.bRun = false
-    end)
-end
-
-local function startEggMon()
-    if S.eRun then return end
-    S.eRun = true
-    task.spawn(function()
-        while S.eOn do
-            bulkEgg()
-            for i = CFG.Interval, 1, -1 do
-                if not S.eOn then break end
-                task.wait(1)
-            end
-        end
-        S.eRun = false
-    end)
-end
-
--- GUI
+-- ==================== UI ====================
 local old = pg:FindFirstChild("AutoFarmUI")
 if old then old:Destroy() end
 
@@ -422,16 +397,9 @@ Main.Active = true
 Main.Draggable = true
 Main.Parent = sg
 
-local mc = Instance.new("UICorner")
-mc.CornerRadius = UDim.new(0, 12)
-mc.Parent = Main
+local mc = Instance.new("UICorner") mc.CornerRadius = UDim.new(0, 12) mc.Parent = Main
+local ms = Instance.new("UIStroke") ms.Color = Color3.fromRGB(70, 90, 120) ms.Thickness = 1.5 ms.Parent = Main
 
-local ms = Instance.new("UIStroke")
-ms.Color = Color3.fromRGB(70, 90, 120)
-ms.Thickness = 1.5
-ms.Parent = Main
-
--- Minimized toggle button (small floating button)
 local MiniBtn = Instance.new("TextButton")
 MiniBtn.Size = UDim2.new(0, 60, 0, 32)
 MiniBtn.Position = UDim2.new(0, 10, 0, 10)
@@ -445,27 +413,26 @@ MiniBtn.Visible = false
 MiniBtn.Active = true
 MiniBtn.Draggable = true
 MiniBtn.Parent = sg
+local mbc = Instance.new("UICorner") mbc.CornerRadius = UDim.new(0, 8) mbc.Parent = MiniBtn
+local mbs = Instance.new("UIStroke") mbs.Color = Color3.fromRGB(70, 200, 70) mbs.Thickness = 1.5 mbs.Parent = MiniBtn
 
-local mbc = Instance.new("UICorner")
-mbc.CornerRadius = UDim.new(0, 8)
-mbc.Parent = MiniBtn
+local MiniFps = Instance.new("TextLabel")
+MiniFps.Size = UDim2.new(1, 0, 0, 14)
+MiniFps.Position = UDim2.new(0, 0, 1, 2)
+MiniFps.BackgroundTransparency = 1
+MiniFps.Text = "FPS: --"
+MiniFps.TextColor3 = Color3.fromRGB(150, 255, 150)
+MiniFps.Font = Enum.Font.GothamBold
+MiniFps.TextSize = 10
+MiniFps.TextXAlignment = Enum.TextXAlignment.Center
+MiniFps.Parent = MiniBtn
 
-local mbs = Instance.new("UIStroke")
-mbs.Color = Color3.fromRGB(70, 200, 70)
-mbs.Thickness = 1.5
-mbs.Parent = MiniBtn
-
--- Header
 local Header = Instance.new("Frame")
 Header.Size = UDim2.new(1, 0, 0, 42)
 Header.BackgroundColor3 = Color3.fromRGB(30, 35, 50)
 Header.BorderSizePixel = 0
 Header.Parent = Main
-
-local hc = Instance.new("UICorner")
-hc.CornerRadius = UDim.new(0, 12)
-hc.Parent = Header
-
+local hc = Instance.new("UICorner") hc.CornerRadius = UDim.new(0, 12) hc.Parent = Header
 local hf = Instance.new("Frame")
 hf.Size = UDim2.new(1, 0, 0, 12)
 hf.Position = UDim2.new(0, 0, 1, -12)
@@ -474,7 +441,7 @@ hf.BorderSizePixel = 0
 hf.Parent = Header
 
 local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(1, -90, 1, 0)
+Title.Size = UDim2.new(1, -170, 1, 0)
 Title.Position = UDim2.new(0, 12, 0, 0)
 Title.BackgroundTransparency = 1
 Title.Text = "🛒  AUTO FARM"
@@ -483,6 +450,20 @@ Title.Font = Enum.Font.GothamBold
 Title.TextSize = 13
 Title.TextXAlignment = Enum.TextXAlignment.Left
 Title.Parent = Header
+
+local FpsLabel = Instance.new("TextLabel")
+FpsLabel.Size = UDim2.new(0, 70, 0, 26)
+FpsLabel.Position = UDim2.new(1, -140, 0, 8)
+FpsLabel.BackgroundColor3 = Color3.fromRGB(15, 20, 28)
+FpsLabel.BackgroundTransparency = 0.2
+FpsLabel.Text = "FPS: --"
+FpsLabel.TextColor3 = Color3.fromRGB(120, 255, 120)
+FpsLabel.Font = Enum.Font.GothamBold
+FpsLabel.TextSize = 11
+FpsLabel.BorderSizePixel = 0
+FpsLabel.Parent = Header
+local fc = Instance.new("UICorner") fc.CornerRadius = UDim.new(0, 6) fc.Parent = FpsLabel
+local fs = Instance.new("UIStroke") fs.Color = Color3.fromRGB(60, 120, 60) fs.Thickness = 1 fs.Parent = FpsLabel
 
 local MinBtn = Instance.new("TextButton")
 MinBtn.Size = UDim2.new(0, 26, 0, 26)
@@ -494,10 +475,7 @@ MinBtn.Font = Enum.Font.GothamBold
 MinBtn.TextSize = 14
 MinBtn.BorderSizePixel = 0
 MinBtn.Parent = Header
-
-local minc = Instance.new("UICorner")
-minc.CornerRadius = UDim.new(0, 6)
-minc.Parent = MinBtn
+local minc = Instance.new("UICorner") minc.CornerRadius = UDim.new(0, 6) minc.Parent = MinBtn
 
 local CloseBtn = Instance.new("TextButton")
 CloseBtn.Size = UDim2.new(0, 26, 0, 26)
@@ -509,39 +487,45 @@ CloseBtn.Font = Enum.Font.GothamBold
 CloseBtn.TextSize = 12
 CloseBtn.BorderSizePixel = 0
 CloseBtn.Parent = Header
+local cc = Instance.new("UICorner") cc.CornerRadius = UDim.new(0, 6) cc.Parent = CloseBtn
 
-local cc = Instance.new("UICorner")
-cc.CornerRadius = UDim.new(0, 6)
-cc.Parent = CloseBtn
-
--- Button builder
-local function makeBtn(y, text, bg, tc, sc)
+local function makeBtn(y, text)
     local b = Instance.new("TextButton")
     b.Size = UDim2.new(1, -24, 0, 44)
     b.Position = UDim2.new(0, 12, 0, y)
-    b.BackgroundColor3 = bg
+    b.BackgroundColor3 = COLOR.OFF_BG
     b.Text = text
-    b.TextColor3 = tc
+    b.TextColor3 = COLOR.OFF_TEXT
     b.Font = Enum.Font.GothamBold
     b.TextSize = 12
     b.BorderSizePixel = 0
     b.Parent = Main
-    local c = Instance.new("UICorner")
-    c.CornerRadius = UDim.new(0, 8)
-    c.Parent = b
-    local s = Instance.new("UIStroke")
-    s.Color = sc
-    s.Thickness = 1
-    s.Parent = b
+    local c = Instance.new("UICorner") c.CornerRadius = UDim.new(0, 8) c.Parent = b
+    local s = Instance.new("UIStroke") s.Color = COLOR.OFF_STROKE s.Thickness = 1.5 s.Parent = b
     return b, s
 end
 
-local GearBtn, GearStroke = makeBtn(54, "▶  BULK BUY GEAR: OFF", Color3.fromRGB(35,45,35), Color3.fromRGB(100,255,100), Color3.fromRGB(70,200,70))
-local BaitBtn, BaitStroke = makeBtn(108, "▶  BULK BUY BAIT: OFF", Color3.fromRGB(45,45,30), Color3.fromRGB(255,230,100), Color3.fromRGB(200,180,70))
-local EggBtn, EggStroke = makeBtn(162, "▶  BULK BUY EGG: OFF", Color3.fromRGB(50,30,40), Color3.fromRGB(255,130,200), Color3.fromRGB(200,80,160))
-local AfkBtn, AfkStroke = makeBtn(216, "🦘  ANTI-AFK: OFF", Color3.fromRGB(30,40,55), Color3.fromRGB(150,200,255), Color3.fromRGB(60,100,150))
-local PlaceBtn, PlaceStroke = makeBtn(270, "🏗️  AUTO PLACE: OFF", Color3.fromRGB(45,35,55), Color3.fromRGB(200,150,255), Color3.fromRGB(130,80,180))
-local CraftBtn, CraftStroke = makeBtn(324, "⚙️  AUTO CRAFT: OFF", Color3.fromRGB(30,45,50), Color3.fromRGB(100,220,255), Color3.fromRGB(60,150,180))
+local GearBtn, GearStroke   = makeBtn(54,  "▶  BULK BUY GEAR: OFF")
+local BaitBtn, BaitStroke   = makeBtn(108, "▶  BULK BUY BAIT: OFF")
+local EggBtn, EggStroke     = makeBtn(162, "▶  BULK BUY EGG: OFF")
+local AfkBtn, AfkStroke     = makeBtn(216, "🦘  ANTI-AFK: OFF")
+local PlaceBtn, PlaceStroke = makeBtn(270, "🏗️  AUTO PLACE: OFF")
+local CraftBtn, CraftStroke = makeBtn(324, "⚙️  AUTO CRAFT: OFF")
+
+-- Helper: set warna tombol ON/OFF
+local function setBtnState(btn, stroke, isOn, onText, offText)
+    if isOn then
+        btn.BackgroundColor3 = COLOR.ON_BG
+        btn.TextColor3       = COLOR.ON_TEXT
+        stroke.Color         = COLOR.ON_STROKE
+        btn.Text             = onText
+    else
+        btn.BackgroundColor3 = COLOR.OFF_BG
+        btn.TextColor3       = COLOR.OFF_TEXT
+        stroke.Color         = COLOR.OFF_STROKE
+        btn.Text             = offText
+    end
+end
 
 local function fmt(s)
     s = math.max(0, math.floor(s))
@@ -550,160 +534,154 @@ end
 
 local function updateUI()
     -- Gear
-    if S.gOn then
-        GearBtn.Text = "⏸  BULK BUY GEAR: ON"
-        GearBtn.TextColor3 = Color3.fromRGB(255,100,100)
-        GearBtn.BackgroundColor3 = Color3.fromRGB(45,30,30)
-        GearStroke.Color = Color3.fromRGB(200,70,70)
-    else
-        GearBtn.Text = "▶  BULK BUY GEAR: OFF"
-        GearBtn.TextColor3 = Color3.fromRGB(100,255,100)
-        GearBtn.BackgroundColor3 = Color3.fromRGB(35,45,35)
-        GearStroke.Color = Color3.fromRGB(70,200,70)
-    end
+    setBtnState(GearBtn, GearStroke, S.gOn,
+        "⏸  BULK BUY GEAR: ON",
+        "▶  BULK BUY GEAR: OFF")
+
     -- Bait
-    if S.bOn then
-        BaitBtn.Text = "⏸  BULK BUY BAIT: ON"
-        BaitBtn.TextColor3 = Color3.fromRGB(255,150,100)
-        BaitBtn.BackgroundColor3 = Color3.fromRGB(50,40,25)
-        BaitStroke.Color = Color3.fromRGB(220,140,70)
-    else
-        BaitBtn.Text = "▶  BULK BUY BAIT: OFF"
-        BaitBtn.TextColor3 = Color3.fromRGB(255,230,100)
-        BaitBtn.BackgroundColor3 = Color3.fromRGB(45,45,30)
-        BaitStroke.Color = Color3.fromRGB(200,180,70)
-    end
+    setBtnState(BaitBtn, BaitStroke, S.bOn,
+        "⏸  BULK BUY BAIT: ON",
+        "▶  BULK BUY BAIT: OFF")
+
     -- Egg
-    if S.eOn then
-        EggBtn.Text = "⏸  BULK BUY EGG: ON"
-        EggBtn.TextColor3 = Color3.fromRGB(255,100,180)
-        EggBtn.BackgroundColor3 = Color3.fromRGB(55,30,40)
-        EggStroke.Color = Color3.fromRGB(200,60,140)
-    else
-        EggBtn.Text = "▶  BULK BUY EGG: OFF"
-        EggBtn.TextColor3 = Color3.fromRGB(255,130,200)
-        EggBtn.BackgroundColor3 = Color3.fromRGB(50,30,40)
-        EggStroke.Color = Color3.fromRGB(200,80,160)
-    end
+    setBtnState(EggBtn, EggStroke, S.eOn,
+        "⏸  BULK BUY EGG: ON",
+        "▶  BULK BUY EGG: OFF")
+
     -- AFK
-    if S.aOn then
-        AfkBtn.Text = "🦘  ANTI-AFK: ON"
-        AfkBtn.TextColor3 = Color3.fromRGB(100,255,150)
-        AfkBtn.BackgroundColor3 = Color3.fromRGB(30,55,40)
-        AfkStroke.Color = Color3.fromRGB(70,200,120)
-    else
-        AfkBtn.Text = "🦘  ANTI-AFK: OFF"
-        AfkBtn.TextColor3 = Color3.fromRGB(150,200,255)
-        AfkBtn.BackgroundColor3 = Color3.fromRGB(30,40,55)
-        AfkStroke.Color = Color3.fromRGB(60,100,150)
-    end
+    setBtnState(AfkBtn, AfkStroke, S.aOn,
+        "🦘  ANTI-AFK: ON",
+        "🦘  ANTI-AFK: OFF")
+
     -- Place
-    if CFG.PlaceOn then
-        PlaceBtn.Text = S.pCd > 0 and ("🏗️  PLACE: " .. S.pCd .. "s") or "🏗️  PLACE: ON"
-        PlaceBtn.TextColor3 = Color3.fromRGB(200,255,200)
-        PlaceBtn.BackgroundColor3 = Color3.fromRGB(40,60,45)
-        PlaceStroke.Color = Color3.fromRGB(120,200,130)
-    else
-        PlaceBtn.Text = "🏗️  AUTO PLACE: OFF"
-        PlaceBtn.TextColor3 = Color3.fromRGB(200,150,255)
-        PlaceBtn.BackgroundColor3 = Color3.fromRGB(45,35,55)
-        PlaceStroke.Color = Color3.fromRGB(130,80,180)
-    end
-    -- Craft
+    setBtnState(PlaceBtn, PlaceStroke, CFG.PlaceOn,
+        "🏗️  AUTO PLACE: ON",
+        "🏗️  AUTO PLACE: OFF")
+
+    -- Craft (punya state teks dinamis, tapi warna tetap ON=hijau, OFF=merah)
     if CFG.CraftOn then
+        CraftBtn.BackgroundColor3 = COLOR.ON_BG
+        CraftBtn.TextColor3       = COLOR.ON_TEXT
+        CraftStroke.Color         = COLOR.ON_STROKE
         if S.cPhase == "submitting" then
             CraftBtn.Text = "⚙️  CRAFT: Submitting..."
-            CraftBtn.TextColor3 = Color3.fromRGB(255,200,100)
-            CraftBtn.BackgroundColor3 = Color3.fromRGB(50,45,30)
-            CraftStroke.Color = Color3.fromRGB(220,170,70)
         elseif S.cPhase == "crafting" then
             CraftBtn.Text = S.cCd > 0 and ("⚙️  CRAFT: " .. fmt(S.cCd)) or "⚙️  CRAFT: Finishing..."
-            CraftBtn.TextColor3 = Color3.fromRGB(150,255,255)
-            CraftBtn.BackgroundColor3 = Color3.fromRGB(30,60,65)
-            CraftStroke.Color = Color3.fromRGB(100,220,255)
         elseif S.cPhase == "collecting" then
             CraftBtn.Text = "⚙️  CRAFT: Collecting..."
-            CraftBtn.TextColor3 = Color3.fromRGB(200,255,200)
-            CraftBtn.BackgroundColor3 = Color3.fromRGB(40,60,45)
-            CraftStroke.Color = Color3.fromRGB(120,200,130)
         else
             CraftBtn.Text = "⚙️  CRAFT: ON — " .. CFG.CraftItem
-            CraftBtn.TextColor3 = Color3.fromRGB(150,255,255)
-            CraftBtn.BackgroundColor3 = Color3.fromRGB(30,60,65)
-            CraftStroke.Color = Color3.fromRGB(100,220,255)
         end
     else
+        CraftBtn.BackgroundColor3 = COLOR.OFF_BG
+        CraftBtn.TextColor3       = COLOR.OFF_TEXT
+        CraftStroke.Color         = COLOR.OFF_STROKE
         CraftBtn.Text = "⚙️  AUTO CRAFT: OFF"
-        CraftBtn.TextColor3 = Color3.fromRGB(100,220,255)
-        CraftBtn.BackgroundColor3 = Color3.fromRGB(30,45,50)
-        CraftStroke.Color = Color3.fromRGB(60,150,180)
     end
 end
 
+-- Countdown craft text (hanya saat crafting)
+local lastCraftText = ""
 task.spawn(function()
-    while true do
+    while sg.Parent do
         task.wait(1)
-        updateUI()
+        if not S.minimized and CFG.CraftOn and S.cPhase == "crafting" then
+            local newText = S.cCd > 0 and ("⚙️  CRAFT: " .. fmt(S.cCd)) or "⚙️  CRAFT: Finishing..."
+            if newText ~= lastCraftText then
+                lastCraftText = newText
+                CraftBtn.Text = newText
+            end
+        end
     end
 end)
 
--- Events
+-- ==================== FPS COUNTER ====================
+local frameCount = 0
+local fpsAccum = 0
+local lastFpsUpdate = os.clock()
+
+RunService.RenderStepped:Connect(function(dt)
+    frameCount += 1
+    fpsAccum += dt
+    local now = os.clock()
+    if now - lastFpsUpdate >= 0.5 then
+        local fps = math.floor(frameCount / fpsAccum + 0.5)
+        S.fps = fps
+        local col
+        if fps >= 50 then col = Color3.fromRGB(120, 255, 120)
+        elseif fps >= 30 then col = Color3.fromRGB(255, 220, 100)
+        else col = Color3.fromRGB(255, 100, 100) end
+
+        FpsLabel.Text = "FPS: " .. fps
+        FpsLabel.TextColor3 = col
+        fs.Color = Color3.fromRGB(col.R*0.5, col.G*0.5, col.B*0.5)
+
+        if MiniBtn.Visible then
+            MiniFps.Text = "FPS: " .. fps
+            MiniFps.TextColor3 = col
+        end
+
+        frameCount = 0
+        fpsAccum = 0
+        lastFpsUpdate = now
+    end
+end)
+
+-- ==================== EVENTS ====================
+local function refresh() updateUI() end
+
 GearBtn.MouseButton1Click:Connect(function()
     S.gOn = not S.gOn
-    updateUI()
-    if S.gOn then startGearMon() end
+    S.nextGear = 0
+    refresh()
 end)
 
 BaitBtn.MouseButton1Click:Connect(function()
     S.bOn = not S.bOn
-    updateUI()
-    if S.bOn then startBaitMon() end
+    S.nextBait = 0
+    refresh()
 end)
 
 EggBtn.MouseButton1Click:Connect(function()
     S.eOn = not S.eOn
-    updateUI()
-    if S.eOn then startEggMon() end
+    S.nextEgg = 0
+    refresh()
 end)
 
 AfkBtn.MouseButton1Click:Connect(function()
     S.aOn = not S.aOn
-    if S.aOn then startAntiAfk() else S.aRun = false end
-    updateUI()
+    S.nextAfk = 0
+    refresh()
 end)
 
 PlaceBtn.MouseButton1Click:Connect(function()
     CFG.PlaceOn = not CFG.PlaceOn
-    if CFG.PlaceOn then startPlace() else S.pRun = false S.pCd = 0 end
-    updateUI()
+    S.nextPlace = 0
+    refresh()
 end)
 
 CraftBtn.MouseButton1Click:Connect(function()
     CFG.CraftOn = not CFG.CraftOn
-    if CFG.CraftOn then startCraft()
-    else S.cRun = false S.cCd = 0 S.cPhase = "idle" end
-    updateUI()
+    S._nextCraftTry = 0
+    if not CFG.CraftOn then
+        S.cPhase = "idle"
+        S.cCd = 0
+    end
+    refresh()
 end)
 
--- Minimize / Restore
 local function setMinimized(state)
     S.minimized = state
     Main.Visible = not state
     MiniBtn.Visible = state
 end
-
-MinBtn.MouseButton1Click:Connect(function()
-    setMinimized(true)
-end)
-
-MiniBtn.MouseButton1Click:Connect(function()
-    setMinimized(false)
-end)
+MinBtn.MouseButton1Click:Connect(function() setMinimized(true) end)
+MiniBtn.MouseButton1Click:Connect(function() setMinimized(false) end)
 
 CloseBtn.MouseButton1Click:Connect(function()
     S.gOn = false S.bOn = false S.eOn = false S.aOn = false
     CFG.PlaceOn = false CFG.CraftOn = false
-    S.aRun = false S.pRun = false S.cRun = false
+    schedulerRunning = false
     sg:Destroy()
 end)
 
@@ -716,5 +694,5 @@ end)
 
 -- Init
 updateUI()
-log("GUI loaded! RightCtrl to toggle. — minimize button added.")
-log("Egg whitelist: " .. table.concat(EGG_WL, ", "))
+startScheduler()
+log("GUI loaded! RightCtrl toggle. — Lightweight + FPS + Green/Red theme.")
