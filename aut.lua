@@ -1,11 +1,12 @@
 --============================================================
--- HALLOWEEN + AUTOFARM + FOOD + FEEDER + HIDE FISH
+-- HALLOWEEN + AUTOFARM + FOOD + HIDE FISH
 --============================================================
 local RS          = game:GetService("ReplicatedStorage")
 local Players     = game:GetService("Players")
 local UIS         = game:GetService("UserInputService")
 local RunService  = game:GetService("RunService")
 local Lighting    = game:GetService("Lighting")
+local VIM         = game:GetService("VirtualInputManager")
 
 local player = Players.LocalPlayer
 local pg     = player:WaitForChild("PlayerGui")
@@ -52,42 +53,19 @@ local COLOR = {
     ON_BG = Color3.fromRGB(50, 200, 80), ON_TEXT = Color3.fromRGB(255, 255, 255), ON_STROKE = Color3.fromRGB(30, 140, 50),
     OFF_BG = Color3.fromRGB(200, 60, 60), OFF_TEXT = Color3.fromRGB(255, 255, 255), OFF_STROKE = Color3.fromRGB(140, 30, 30),
     HW_ON = Color3.fromRGB(255, 140, 0),
-    FEEDER_ON = Color3.fromRGB(255, 160, 40),
     HIDE_ON = Color3.fromRGB(180, 30, 30),
-}
-
-local FEEDER_POSITIONS = {
-    Vector3.new(25.86, -0.012, -26.00),
-    Vector3.new(106.86, -0.012, -56.00),
-    Vector3.new(25.86, -0.012, 26.00),
-    Vector3.new(136.86, -0.012, -57.00),
-    Vector3.new(26.86, -0.012, 56.00),
-    Vector3.new(66.86, -0.012, 56.00),
-    Vector3.new(135.86, -0.012, 25.00),
-    Vector3.new(135.86, -0.012, 56.00),
-    Vector3.new(106.86, -0.012, -26.00),
-    Vector3.new(105.86, -0.012, 56.00),
-    Vector3.new(137.86, -0.012, -26.00),
-    Vector3.new(65.86, -0.012, -26.00),
-    Vector3.new(105.86, -0.012, 25.00),
-    Vector3.new(65.86, -0.012, -56.00),
-    Vector3.new(25.86, -0.012, -56.00),
-    Vector3.new(65.86, -0.012, 26.00),
 }
 
 local CFG = {
     Interval = 5, BuyAll = true, BaitWL = {}, BaitBL = {},
-    AfkInt = 300,
+    AfkInt = 240,
     FoodOn = false, FoodInt = 300,
     FoodType = "SupremeFoodTray", FoodCat = "booster",
     FoodPos = Vector3.new(10.86, -0.012, -11),
-    FeederInterval = 300,
-    FeederType = "AdvancedAutoFeeder",
-    FeederCat = "booster",
-    FeederDelay = 0.5,
     CraftOn = false, CraftItem = "TimeJumper", CraftCat = "gear",
     CraftMats = {{n = "TeleportWand", a = 10}, {n = "MagnifyingGlass", a = 25}, {n = "SupremeAutoFeeder", a = 1}},
-    StockTTL = 1.5, BuyDelay = 0.08, SchedulerTick = 0.5,
+    StockTTL = 1.5, BuyDelay = 0.15,
+    SchedulerTick = 0.5,
     GoldenInterval = 3, GoldenIdleInterval = 10, GoldenBuyDelay = 0.25,
     GoldenBulkLoopDelay = 0.4, GoldenMaxPass = 8,
 }
@@ -98,7 +76,6 @@ local S = {
     pRun = false, pCnt = 0, pCd = 0,
     cRun = false, cAtt = 0, cOk = 0, cFail = 0, cCd = 0, cPhase = "idle",
     gdOn = false, gdTot = 0, gdActive = false,
-    fdOn = false, fdRunning = false, fdNextTime = 0,
     minimized = false,
     nextGear = 0, nextBait = 0, nextEgg = 0, nextAfk = 0, nextPlace = 0,
     nextGolden = 0, _stockCache = {}, fps = 0,
@@ -106,14 +83,10 @@ local S = {
     hwCollectThread = nil, hwFeedPickupThread = nil,
 }
 
---=== FPS BOOST + HIDE FISH STATE ===
 local FPS_STATE = {
-    boosted = false,
-    originalSettings = {},
-    hiddenObjects = {},
-    terrainSettings = {},
-    fishHidden = false,
-    hiddenFish = {},
+    boosted = false, originalSettings = {}, hiddenObjects = {},
+    terrainSettings = {}, fishHidden = false, hiddenFish = {},
+    mutedSounds = {},
 }
 
 local Terrain = workspace:FindFirstChildOfClass("Terrain")
@@ -121,6 +94,36 @@ local Terrain = workspace:FindFirstChildOfClass("Terrain")
 local function safeGetChildren(p) local ok, c = pcall(function() return p:GetChildren() end) if ok and c then return c end return {} end
 local function safeGetDescendants(p) local ok, c = pcall(function() return p:GetDescendants() end) if ok and c then return c end return {} end
 
+--=== ANTI-AFK ===
+local function sendJumpInput()
+    pcall(function()
+        VIM:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+        task.wait(0.05)
+        VIM:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+    end)
+end
+
+local function sendMovementInput()
+    pcall(function()
+        VIM:SendKeyEvent(true, Enum.KeyCode.W, false, game)
+        task.wait(0.1)
+        VIM:SendKeyEvent(false, Enum.KeyCode.W, false, game)
+    end)
+end
+
+local function sendMouseMove()
+    pcall(function()
+        local cam = workspace.CurrentCamera
+        if cam then
+            local pos = UIS:GetMouseLocation()
+            VIM:SendMouseMoveEvent(pos.X + 5, pos.Y + 5, game)
+            task.wait(0.05)
+            VIM:SendMouseMoveEvent(pos.X, pos.Y, game)
+        end
+    end)
+end
+
+--=== FPS BOOST ===
 local function saveOriginalSettings()
     FPS_STATE.originalSettings = {
         GlobalShadows = Lighting.GlobalShadows, ShadowSoftness = Lighting.ShadowSoftness,
@@ -147,6 +150,7 @@ local function boostFPS()
         saveOriginalSettings()
         FPS_STATE.boosted = true
         FPS_STATE.hiddenObjects = {}
+        FPS_STATE.mutedSounds = {}
         Lighting.GlobalShadows = false
         Lighting.ShadowSoftness = 0
         Lighting.Brightness = 2
@@ -189,9 +193,12 @@ local function boostFPS()
                 end)
             end
         end
-        for _, s in ipairs(safeGetDescendants(game)) do
+        for _, s in ipairs(safeGetDescendants(workspace)) do
             pcall(function()
-                if s:IsA("Sound") and s.Playing then s.Playing = false end
+                if s:IsA("Sound") and s.Playing then
+                    s.Playing = false
+                    table.insert(FPS_STATE.mutedSounds, s)
+                end
             end)
         end
     end)
@@ -228,6 +235,12 @@ local function unboostFPS()
             end)
         end
         FPS_STATE.hiddenObjects = {}
+        for _, s in ipairs(FPS_STATE.mutedSounds) do
+            pcall(function()
+                if s and s.Parent then s.Playing = true end
+            end)
+        end
+        FPS_STATE.mutedSounds = {}
     end)
     return true
 end
@@ -241,40 +254,26 @@ end
 local function hideFish()
     if FPS_STATE.fishHidden then return 0 end
     FPS_STATE.hiddenFish = {}
-
     local count = 0
-
     local gameFolder = workspace:FindFirstChild("Game")
     if gameFolder then
-        local entry = {
-            obj = gameFolder,
-            parent = gameFolder.Parent,
-            type = "folder",
-        }
+        table.insert(FPS_STATE.hiddenFish, {obj = gameFolder, parent = gameFolder.Parent, type = "folder"})
         pcall(function() gameFolder.Parent = nil end)
-        table.insert(FPS_STATE.hiddenFish, entry)
         count += 1
     end
-
     for _, obj in ipairs(workspace:GetDescendants()) do
         if obj:IsA("Model") and obj.Parent then
             if obj.Parent.Name:lower():find("pond") then
                 local n = obj.Name:lower()
                 if n == "sardine" or n == "cod" or n == "salmon"
                    or n:find("_gold") or n:find("_silver") then
-                    local entry = {
-                        obj = obj,
-                        parent = obj.Parent,
-                        type = "model",
-                    }
+                    table.insert(FPS_STATE.hiddenFish, {obj = obj, parent = obj.Parent, type = "model"})
                     pcall(function() obj.Parent = nil end)
-                    table.insert(FPS_STATE.hiddenFish, entry)
                     count += 1
                 end
             end
         end
     end
-
     FPS_STATE.fishHidden = true
     return count
 end
@@ -282,7 +281,6 @@ end
 local function showFish()
     if not FPS_STATE.fishHidden then return 0 end
     local count = 0
-
     for _, entry in ipairs(FPS_STATE.hiddenFish) do
         if entry.obj then
             pcall(function()
@@ -291,7 +289,6 @@ local function showFish()
             end)
         end
     end
-
     FPS_STATE.hiddenFish = {}
     FPS_STATE.fishHidden = false
     return count
@@ -419,22 +416,21 @@ local function bulkEgg()
     end
 end
 
+--=== ANTI-AFK JUMP ===
 local function doJump()
     S.aTot += 1
     local ch = player.Character
     if not ch then S.aFail += 1 return end
     local h = ch:FindFirstChildOfClass("Humanoid")
     if not h or h.Health <= 0 then S.aFail += 1 return end
-    local cs = h:GetState()
-    if cs == Enum.HumanoidStateType.Jumping or cs == Enum.HumanoidStateType.Freefall then S.aOk += 1 return end
-    local ok = pcall(function()
-        if h.Sit then h.Sit = false task.wait(0.05) end
-        if h.PlatformStand then h.PlatformStand = false task.wait(0.05) end
-        h:ChangeState(Enum.HumanoidStateType.Running)
-        task.wait(0.05)
-        h:ChangeState(Enum.HumanoidStateType.Jumping)
-    end)
-    if ok then S.aOk += 1 else S.aFail += 1 end
+
+    sendJumpInput()
+    task.wait(0.1)
+    sendMovementInput()
+    task.wait(0.1)
+    sendMouseMove()
+
+    S.aOk += 1
 end
 
 local function doFood()
@@ -442,20 +438,6 @@ local function doFood()
     pcall(function()
         placeRemote:InvokeServer(CFG.FoodCat, CFG.FoodType, CFG.FoodPos)
     end)
-end
-
-local function autoPlaceAllFeeders()
-    if S.fdRunning then return end
-    S.fdRunning = true
-    for _, pos in ipairs(FEEDER_POSITIONS) do
-        if not S.fdOn then break end
-        pcall(function()
-            placeRemote:InvokeServer(CFG.FeederCat, CFG.FeederType, pos)
-        end)
-        task.wait(CFG.FeederDelay)
-    end
-    S.fdRunning = false
-    S.fdNextTime = os.clock() + CFG.FeederInterval
 end
 
 --=== CRAFT ===
@@ -613,9 +595,11 @@ local function halloweenPickupAll()
     for _, obj in ipairs(workspace:GetChildren()) do
         if obj:IsA("BasePart") and obj.Name:sub(1, 7) == "Pickup_" then
             local uuid = obj.Name:sub(8)
-            pcall(function() hwClaimPickup:FireServer(uuid) end)
-            count += 1
-            task.wait(0.02)
+            if #uuid > 0 then
+                pcall(function() hwClaimPickup:FireServer(uuid) end)
+                count += 1
+                task.wait(0.02)
+            end
         end
     end
     return count
@@ -674,10 +658,6 @@ local function tickScheduler()
         task.spawn(doFood)
     end
 
-    if S.fdOn and not S.fdRunning and now >= S.fdNextTime then
-        task.spawn(autoPlaceAllFeeders)
-    end
-
     if S.gdOn and now >= S.nextGolden then
         local interval = S.gdActive and CFG.GoldenInterval or CFG.GoldenIdleInterval
         S.nextGolden = now + interval
@@ -732,8 +712,8 @@ sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 sg.Parent = pg
 
 local Main = Instance.new("Frame")
-Main.Size = UDim2.new(0, 270, 0, 305)
-Main.Position = UDim2.new(0.5, -135, 0.5, -152)
+Main.Size = UDim2.new(0, 270, 0, 268)
+Main.Position = UDim2.new(0.5, -135, 0.5, -134)
 Main.BackgroundColor3 = Color3.fromRGB(20, 22, 30)
 Main.BorderSizePixel = 0
 Main.Active = true
@@ -850,7 +830,6 @@ local function makeBtn(x, y, w, text, customColor)
     return b, s
 end
 
--- HALLOWEEN SECTION
 local HW_Y = 38
 makeSectionHeader("🎃  HALLOWEEN", HW_Y, Color3.fromRGB(45, 25, 12), Color3.fromRGB(255, 180, 80))
 
@@ -858,7 +837,6 @@ local HWCollectBtn, HWCollectStroke = makeBtn(COL1, HW_Y + 24, BTN_W, "🎣 COLL
 local HWFeedBtn, HWFeedStroke = makeBtn(COL2, HW_Y + 24, BTN_W, "🔥 FEED", COLOR.HW_ON)
 local HWPickupBtn, HWPickupStroke = makeBtn(COL3, HW_Y + 24, BTN_W, "💰 PICKUP", COLOR.HW_ON)
 
--- AUTO FARM SECTION
 local AF_Y = HW_Y + 24 + ROW_H + 8
 makeSectionHeader("🛒  AUTO FARM", AF_Y, Color3.fromRGB(25, 35, 45), Color3.fromRGB(120, 200, 255))
 
@@ -868,13 +846,11 @@ local EggBtn, EggStroke = makeBtn(COL3, AF_Y + 24, BTN_W, "▶ EGG")
 
 local AfkBtn, AfkStroke = makeBtn(COL1, AF_Y + 24 + ROW_H, BTN_W, "🦘 AFK")
 local FoodBtn, FoodStroke = makeBtn(COL2, AF_Y + 24 + ROW_H, BTN_W, "🍔 FOOD")
-local FeederBtn, FeederStroke = makeBtn(COL3, AF_Y + 24 + ROW_H, BTN_W, "🏭 FEEDER", COLOR.FEEDER_ON)
+local CraftBtn, CraftStroke = makeBtn(COL3, AF_Y + 24 + ROW_H, BTN_W, "⚙️ CRAFT")
 
-local CraftBtn, CraftStroke = makeBtn(COL1, AF_Y + 24 + ROW_H * 2, BTN_W, "⚙️ CRAFT")
-local GoldenBtn, GoldenStroke = makeBtn(COL2, AF_Y + 24 + ROW_H * 2, BTN_W, "🥇 GOLD")
-local BoostBtn, BoostStroke = makeBtn(COL3, AF_Y + 24 + ROW_H * 2, BTN_W, "⚡ BOOST")
-
-local HideFishBtn, HideFishStroke = makeBtn(COL1, AF_Y + 24 + ROW_H * 3, BTN_W, "🐟 HIDE", COLOR.HIDE_ON)
+local GoldenBtn, GoldenStroke = makeBtn(COL1, AF_Y + 24 + ROW_H * 2, BTN_W, "🥇 GOLD")
+local BoostBtn, BoostStroke = makeBtn(COL2, AF_Y + 24 + ROW_H * 2, BTN_W, "⚡ BOOST")
+local HideFishBtn, HideFishStroke = makeBtn(COL3, AF_Y + 24 + ROW_H * 2, BTN_W, "🐟 HIDE", COLOR.HIDE_ON)
 
 local MiniBtn = Instance.new("TextButton")
 MiniBtn.Size = UDim2.new(0, 56, 0, 28)
@@ -913,7 +889,6 @@ end
 local function updateUI()
     setBtnState(HWCollectBtn, HWCollectStroke, S.hwCollect, "🎣 ON", "🎣 COLLECT")
     setBtnState(HWFeedBtn, HWFeedStroke, S.hwFeedPickup, "🔥 ON", "🔥 FEED")
-    -- Pickup — selalu bisa, tidak ada state toggle
     HWPickupBtn.BackgroundColor3 = COLOR.HW_ON
     HWPickupBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 
@@ -922,23 +897,6 @@ local function updateUI()
     setBtnState(EggBtn, EggStroke, S.eOn, "⏸ EGG", "▶ EGG")
     setBtnState(AfkBtn, AfkStroke, S.aOn, "🦘 ON", "🦘 AFK")
     setBtnState(FoodBtn, FoodStroke, CFG.FoodOn, "🍔 ON", "🍔 FOOD")
-
-    if S.fdOn then
-        FeederBtn.BackgroundColor3 = COLOR.ON_BG
-        FeederBtn.TextColor3 = COLOR.ON_TEXT
-        FeederStroke.Color = COLOR.ON_STROKE
-        if S.fdRunning then
-            FeederBtn.Text = "🏭 ..."
-        else
-            local remain = math.max(0, math.floor(S.fdNextTime - os.clock()))
-            FeederBtn.Text = string.format("🏭 %ds", remain)
-        end
-    else
-        FeederBtn.BackgroundColor3 = COLOR.FEEDER_ON
-        FeederBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-        FeederStroke.Color = Color3.fromRGB(200, 110, 20)
-        FeederBtn.Text = "🏭 FEEDER"
-    end
 
     setBtnState(BoostBtn, BoostStroke, FPS_STATE.boosted, "⚡ ON", "⚡ BOOST")
     setBtnState(HideFishBtn, HideFishStroke, FPS_STATE.fishHidden, "🐟 ON", "🐟 HIDE")
@@ -1013,7 +971,6 @@ HWFeedBtn.MouseButton1Click:Connect(function()
     updateUI()
 end)
 
--- PICKUP — langsung pickup semua
 HWPickupBtn.MouseButton1Click:Connect(function()
     task.spawn(function()
         local count = halloweenPickupAll()
@@ -1029,12 +986,6 @@ AfkBtn.MouseButton1Click:Connect(function() S.aOn = not S.aOn S.nextAfk = 0 upda
 FoodBtn.MouseButton1Click:Connect(function()
     CFG.FoodOn = not CFG.FoodOn
     S.nextPlace = 0
-    updateUI()
-end)
-
-FeederBtn.MouseButton1Click:Connect(function()
-    S.fdOn = not S.fdOn
-    if S.fdOn then S.fdNextTime = 0 end
     updateUI()
 end)
 
@@ -1071,7 +1022,6 @@ MiniBtn.MouseButton1Click:Connect(function() setMinimized(false) end)
 CloseBtn.MouseButton1Click:Connect(function()
     S.gOn = false S.bOn = false S.eOn = false S.aOn = false S.gdOn = false
     CFG.FoodOn = false CFG.CraftOn = false
-    S.fdOn = false S.fdRunning = false
     stopHWCollect()
     stopHWFeedPickup()
     if FPS_STATE.boosted then unboostFPS() end
